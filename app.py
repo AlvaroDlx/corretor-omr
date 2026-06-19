@@ -19,7 +19,7 @@ def detect_marked_bubbles(image_bytes, num_options, sens_mode):
 
     # 1. Normalização do Espaço de Cores e Remoção de Ruído
     gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    blurred = cv2.GaussianBlur(gray, (15, 15), 0)
 
     # CONFIGURAÇÃO DINÂMICA
     block_radius = 45
