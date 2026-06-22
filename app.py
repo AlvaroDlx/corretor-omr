@@ -22,7 +22,7 @@ st.markdown("""
         .stMetric { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; }
         .stAlert { border-radius: 10px; }
     </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
 # ==========================================
 # MÓDULO MATEMÁTICO E ENGENHARIA DE SINAIS (OMR)
@@ -213,7 +213,8 @@ def main():
                             # Renderização dos Bounding Boxes de Feedback Visual
                             box = s_data['box']
                             if box:
-                                draw_color = (0, 200, 0) if match else (230, 0, 0)
+                                # Em OpenCV as cores são BGR: (0, 200, 0) é verde, (0, 0, 230) é vermelho
+                                draw_color = (0, 200, 0) if match else (0, 0, 230)
                                 cv2.rectangle(s_img, (int(box['x']), int(box['y'])), 
                                               (int(box['x'] + box['w']), int(box['y'] + box['h'])), draw_color, 3)
                         
