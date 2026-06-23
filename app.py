@@ -2,12 +2,13 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
+import io
 
 # ==========================================
 # CONFIGURAÇÃO DE INTERFACE DA PLATAFORMA
 # ==========================================
 st.set_page_config(
-    page_title="Cognitive OMR Vision Engine v6.0", 
+    page_title="Enterprise OMR Analytics v5.0", 
     page_icon="🧠", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -22,13 +23,41 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# MOTOR DE INTELIGÊNCIA ARTIFICIAL E PROPORÇÃO
+# MÓDULO DE INTELIGÊNCIA GEOMÉTRICA (OMR)
 # ==========================================
 class OMRProcessingEngine:
+    
+    @staticmethod
+    def generate_demo_sheet(pattern_type, num_questions, num_options):
+        h_img = max(600, 100 + num_questions * 55)
+        img = np.ones((h_img, 1000, 3), dtype=np.uint8) * 255
+        
+        cv2.putText(img, f"GABARITO SINTETICO SIMULADO: {pattern_type.upper()}", (50, 40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 80, 80), 2)
+        
+        for q in range(num_questions):
+            y = 100 + q * 50
+            cv2.putText(img, f"Q{q+1:02d}:", (50, y + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (50, 50, 50), 2)
+            
+            if pattern_type == 'master':
+                marked_option = q % num_options
+            else:
+                marked_option = 0 if q % 3 == 0 else q % num_options
+                    
+            for opt in range(num_options):
+                x = 220 + opt * 130
+                cv2.circle(img, (x, y), 20, (0, 0, 0), 2)
+                letra = chr(65 + opt)
+                cv2.putText(img, letra, (x - 7, y + 7), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (120, 120, 120), 2)
+                
+                if opt == marked_option:
+                    cv2.circle(img, (x, y), 18, (40, 40, 40), -1)
+                    
+        _, buffer = cv2.imencode('.png', img)
+        return buffer.tobytes()
 
     @staticmethod
     def normalize_resolution(image_bytes, target_width=1000):
-        """Garante consistência absoluta: qualquer resolução vira 1000px de largura."""
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
@@ -37,189 +66,219 @@ class OMRProcessingEngine:
         scale = target_width / float(w)
         return cv2.resize(img, (target_width, int(h * scale)), interpolation=cv2.INTER_AREA), scale
 
+    @staticmethod
+    def apply_computer_vision_filters(gray_img, sensitivity_mode):
+        blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
+        block_size = 55 # Aumentado para ignorar sombras ainda maiores
+        constant = 12 if sensitivity_mode == 'high' else 8
+        return cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block_size, constant)
+
     @classmethod
-    def process_form(cls, image_bytes, num_options):
-        """Processamento independente baseado em geometria matricial adaptativa."""
-        src, scale = cls.normalize_resolution(image_bytes)
-        gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
+    def extract_and_filter_contours(cls, thresh_img):
+        """Inteligência Morfológica Dinâmica."""
+        contours, _ = cv2.findContours(thresh_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        potential_bubbles = []
         
-        # Filtro de binarização adaptativa otimizado para remover ruídos e texturas de fundo
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 41, 7
-        )
-        
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        bubbles = []
-        
-        # Filtragem geométrica baseada na proporção de escala da largura de 1000px
+        # PASSO 1: Encontrar tudo que parece um círculo sólido
         for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = w / float(h)
+            area = cv2.contourArea(cnt)
             
-            # Na escala de 1000px, caixas de questões e alternativas medem entre 25 e 85 pixels
-            if 25 <= w <= 85 and 25 <= h <= 85 and 0.7 <= aspect_ratio <= 1.3:
-                area = cv2.contourArea(cnt)
+            if h > 0 and 0.7 <= aspect_ratio <= 1.3:
                 extent = area / float(w * h)
-                
-                # Filtra assinaturas, textos corridos ou linhas finas de tabelas
-                if extent > 0.35:
-                    mask = np.zeros(thresh.shape, dtype="uint8")
-                    cv2.drawContours(mask, [cnt], -1, 255, -1)
-                    density = cv2.mean(thresh, mask=mask)[0]
-                    
-                    bubbles.append({
-                        'x': x, 'y': y, 'w': w, 'h': h,
-                        'cx': x + w / 2.0, 'cy': y + h / 2.0,
-                        'density': density, 'cnt': cnt
-                    })
-                    
-        if not bubbles:
-            return [], src, thresh, "Nenhum elemento estrutural foi identificado na folha."
+                # Filtro de solidez: ignora letras "finas"
+                if extent > 0.4:
+                    potential_bubbles.append({'x': x, 'y': y, 'w': w, 'h': h, 'cnt': cnt, 'cx': x + w/2.0, 'cy': y + h/2.0})
 
-        # AGRUPAMENTO GEOGRÁFICO DE LINHAS (Pensamento adaptativo por proximidade)
-        rows = []
+        if not potential_bubbles: return []
+
+        # PASSO 2: Calibração Dinâmica (O Segredo)
+        # Calcula a largura média das bolhas. Isso permite analisar fotos de perto ou de longe automaticamente.
+        median_w = np.median([b['w'] for b in potential_bubbles])
+        
+        valid_bubbles = []
+        for b in potential_bubbles:
+            # Pega apenas o que tiver um tamanho parecido com a média (ignora caixas grandes e ruídos pequenos)
+            if median_w * 0.6 <= b['w'] <= median_w * 1.4:
+                mask = np.zeros(thresh_img.shape, dtype="uint8")
+                cv2.drawContours(mask, [b['cnt']], -1, 255, -1)
+                density = cv2.mean(thresh_img, mask=mask)[0]
+                b['density'] = density
+                valid_bubbles.append(b)
+                
+        return valid_bubbles
+
+    @classmethod
+    def process_form(cls, image_bytes, num_questions, num_options, sensitivity_mode):
+        src, scale = cls.normalize_resolution(image_bytes)
+        gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
+        thresh = cls.apply_computer_vision_filters(gray, sensitivity_mode)
+        bubbles = cls.extract_and_filter_contours(thresh)
+        
+        if not bubbles:
+            return None, src, thresh, "Erro Crítico: Nenhuma marcação ou bolha identificada."
+
+        # PENSAMENTO ESTRUTURAL GEOGRÁFICO (Substitui o K-Means)
+        # Ordena tudo de cima para baixo
         bubbles.sort(key=lambda b: b['cy'])
         
-        for b in bubbles:
-            inserted = False
-            for row in rows:
-                row_cy = np.mean([item['cy'] for item in row])
-                # Agrupa na mesma linha se a variação vertical for mínima
-                if abs(b['cy'] - row_cy) < 28:
-                    row.append(b)
-                    inserted = True
-                    break
-            if not inserted:
-                rows.append([b])
-                
-        # Ordena as linhas de cima para baixo
-        rows.sort(key=lambda r: np.mean([item['cy'] for item in r]))
-        # Filtra ruídos isolados que não formam uma linha de gabarito (mínimo número + 1 alternativa)
-        rows = [r for r in rows if len(r) >= 2]
+        rows = []
+        current_row = [bubbles[0]]
+        median_h = np.median([b['h'] for b in bubbles])
+
+        # Agrupa bolhas em linhas baseadas na distância vertical
+        for b in bubbles[1:]:
+            if abs(b['cy'] - current_row[-1]['cy']) < (median_h * 0.8):
+                current_row.append(b)
+            else:
+                rows.append(current_row)
+                current_row = [b]
+        rows.append(current_row)
         
-        # CÁLCULO DINDÂMICO DO ESPAÇAMENTO LATERAL
-        spacings = []
-        for r in rows:
-            r.sort(key=lambda b: b['cx'])
-            if len(r) >= 3:
-                for i in range(len(r) - 1):
-                    spacings.append(r[i+1]['cx'] - r[i]['cx'])
-                    
-        avg_spacing = np.median(spacings) if spacings else 75
-        
-        options_alphabet = ['A', 'B', 'C', 'D', 'E', 'F'][:num_options]
+        options_alphabet = ['A', 'B', 'C', 'D', 'E'][:num_options]
         parsed_results = []
         
-        for idx, r in enumerate(rows):
-            # Garante a ordenação da esquerda para a direita
-            r.sort(key=lambda b: b['cx'])
+        # Pega apenas a quantidade de linhas que o usuário configurou (de cima para baixo)
+        target_rows = rows[:num_questions]
+        
+        for q_index, row in enumerate(target_rows):
+            # Ordena da Esquerda para a Direita
+            row.sort(key=lambda b: b['cx'])
             
-            # DEFINIÇÃO DA ÂNCORA: O primeiro elemento à esquerda é o número da questão!
-            q_box = r[0]
-            alternative_boxes = r[1:]
-            
-            marked_choice = "NULO"
-            highest_density = -1
-            chosen_box = None
-            
-            for b in alternative_boxes:
-                # Calcula a distância em relação ao número da questão para saber a letra exata
-                distance_from_anchor = b['cx'] - q_box['cx']
-                detected_col = int(round(distance_from_anchor / avg_spacing)) - 1
+            # Corta ruídos lidos à esquerda (como números da questão)
+            if len(row) > num_options:
+                row = row[-num_options:]
                 
-                if 0 <= detected_col < num_options:
-                    # Avalia preenchimento (limiar de corte adaptativo para caneta/grafite)
-                    if b['density'] > highest_density and b['density'] > 45:
-                        highest_density = b['density']
-                        marked_choice = options_alphabet[detected_col]
-                        chosen_box = b
-                        
-            parsed_results.append({
-                'question_index': idx + 1,
-                'q_box': q_box,
-                'choice': marked_choice,
-                'chosen_box': chosen_box,
-                'all_components': r
-            })
+            # LÓGICA RELATIVA DE PREENCHIMENTO
+            # Em vez de um limite fixo, compara qual bolha é a mais escura da própria linha
+            best_bubble_idx = -1
+            max_density = -1
+            baseline_density = 15 if sensitivity_mode == 'high' else 25 # Mínimo absoluto para não chutar em branco
             
+            for idx, b in enumerate(row):
+                if b['density'] > max_density:
+                    max_density = b['density']
+                    best_bubble_idx = idx
+
+            # Registra a decisão da IA
+            if max_density > baseline_density and best_bubble_idx < len(row):
+                safe_index = min(best_bubble_idx, num_options - 1)
+                final_choice = options_alphabet[safe_index]
+                chosen_box = row[safe_index]
+                parsed_results.append({'question': q_index + 1, 'choice': final_choice, 'box': chosen_box})
+            else:
+                parsed_results.append({'question': q_index + 1, 'choice': 'NULO', 'box': row[0] if row else None})
+                
         return parsed_results, src, thresh, None
 
 # ==========================================
-# INTERFACE GRÁFICA DO USUÁRIO (STREAMLIT)
+# INTERFACE GRÁFICA DE USUÁRIO (STREAMLIT UI)
 # ==========================================
 def main():
-    st.sidebar.title("🧠 Inteligência OMR")
-    num_options = st.sidebar.selectbox("Alternativas por Questão", [5, 4], format_func=lambda x: f"{x} Opções (A até {chr(64+x)})")
+    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2103/2103633.png", width=80)
+    st.sidebar.title("Configurações do Motor")
     
-    st.title("🧠 Corretor Cognitivo de Gabaritos")
-    st.write("Insira os cartões de resposta. O motor identificará as caixas dos números e as marcações de forma autônoma.")
+    num_questions = st.sidebar.slider("Número de Questões", min_value=5, max_value=30, value=10, step=1)
+    num_options = st.sidebar.selectbox("Opções por Questão", [5, 4], format_func=lambda x: f"{x} Alternativas (A a {chr(64+x)})")
+    sens_mode = st.sidebar.select_slider("Sensibilidade do Scanner", options=['normal', 'high'], format_func=lambda x: "Padrão (Caneta)" if x=='normal' else "Alta (Grafite/Lápis)")
     
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("📁 Gabarito Oficial (Mestre)")
-        master_file = st.file_uploader("Upload do gabarito oficial", type=['jpg','jpeg','png'], key="master")
-    with c2:
-        st.subheader("📁 Cartão de Respostas (Aluno)")
-        student_file = st.file_uploader("Upload da folha do aluno", type=['jpg','jpeg','png'], key="student")
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Enterprise OMR Engine v5.0")
+
+    st.title("🧠 Dashboard de Correção Inteligente OMR")
+
+    tabs = st.tabs(["📊 Painel de Operações", "🔍 Diagnóstico da IA e Filtros"])
+
+    with tabs[0]:
+        c1, c2 = st.columns(2)
         
-    if master_file and student_file:
+        with c1:
+            st.subheader("📁 Gabarito de Calibração (Mestre)")
+            master_file = st.file_uploader("Upload da folha gabarito", type=['jpg','jpeg','png'], key="m_upl")
+            if master_file:
+                m_bytes = master_file.getvalue()
+                st.image(master_file, caption="Gabarito de Referência", use_container_width=True)
+            else:
+                m_bytes = OMRProcessingEngine.generate_demo_sheet('master', num_questions, num_options)
+                st.image(m_bytes, caption="📸 [MODO EMBUTIDO] Gabarito Mestre", use_container_width=True)
+            
+        with c2:
+            st.subheader("📁 Cartão de Respostas (Alunos)")
+            student_file = st.file_uploader("Upload da folha do aluno", type=['jpg','jpeg','png'], key="s_upl")
+            if student_file:
+                s_bytes = student_file.getvalue()
+                st.image(student_file, caption="Cartão do Aluno", use_container_width=True)
+            else:
+                s_bytes = OMRProcessingEngine.generate_demo_sheet('student', num_questions, num_options)
+                st.image(s_bytes, caption="📸 [MODO EMBUTIDO] Respostas do Aluno", use_container_width=True)
+
         st.markdown("---")
-        if st.button("🚀 Processar e Corrigir Ambas as Imagens", use_container_width=True, type="primary"):
-            with st.spinner("Executando leitura matricial estruturada..."):
+        if st.button("🚀 Iniciar Análise e Correção em Lote", use_container_width=True, type="primary"):
+            
+            with st.spinner("Analisando..."):
+                m_res, m_img, m_thresh, m_err = OMRProcessingEngine.process_form(m_bytes, num_questions, num_options, sens_mode)
+                s_res, s_img, s_thresh, s_err = OMRProcessingEngine.process_form(s_bytes, num_questions, num_options, sens_mode)
                 
-                m_res, m_img, _, m_err = OMRProcessingEngine.process_form(master_file.getvalue(), num_options)
-                s_res, s_img, _, s_err = OMRProcessingEngine.process_form(student_file.getvalue(), num_options)
-                
+                st.session_state['m_thresh'] = m_thresh
+                st.session_state['s_thresh'] = s_thresh
+
                 if m_err or s_err:
-                    st.error(f"Não foi possível processar: {m_err if m_err else s_err}")
-                    return
-                
-                # Cruzamento de dados inteligente baseado no número real mapeado
-                master_dict = {item['question_index']: item['choice'] for item in m_res}
-                
-                correct_count = 0
-                table_report = []
-                
-                for s_item in s_res:
-                    q_num = s_item['question_index']
-                    gabarito_val = master_dict.get(q_num, "NULO")
-                    aluno_val = s_item['choice']
+                    st.error(f"❌ Erro Estrutural: {m_err if m_err else s_err}")
+                else:
+                    correct_answers = 0
+                    report_data = []
                     
-                    is_correct = (gabarito_val == aluno_val) and (aluno_val != "NULO")
-                    if is_correct:
-                        correct_count += 1
+                    for m_data, s_data in zip(m_res, s_res):
+                        match = (m_data['choice'] == s_data['choice']) and (m_data['choice'] != 'NULO')
+                        if match: correct_answers += 1
                         
-                    table_report.append({
-                        "Questão": f"Questão {q_num}",
-                        "Gabarito Oficial": gabarito_val,
-                        "Resposta do Aluno": aluno_val,
-                        "Status": "✅ Acertou" if is_correct else "❌ Errou"
-                    })
+                        report_data.append({
+                            "Questão ID": f"Questão {m_data['question']}",
+                            "Gabarito Oficial": m_data['choice'],
+                            "Resposta Aluno": s_data['choice'],
+                            "Validação": "✅ Correta" if match else "❌ Incorreta"
+                        })
+                        
+                        box = s_data['box']
+                        if box:
+                            draw_color = (0, 200, 0) if match else (0, 0, 230)
+                            cv2.rectangle(s_img, (int(box['x']), int(box['y'])), 
+                                          (int(box['x'] + box['w']), int(box['y'] + box['h'])), draw_color, 3)
                     
-                    # 🔵 Desenha um retângulo AZUL no número da questão para provar o mapeamento
-                    q_b = s_item['q_box']
-                    cv2.rectangle(s_img, (int(q_b['x']), int(q_b['y'])), (int(q_b['x']+q_b['w']), int(q_b['y']+q_b['h'])), (255, 0, 0), 2)
+                    st.subheader("📊 Relatório de Performance Estatística")
+                    idx1, idx2, idx3, idx4 = st.columns(4)
                     
-                    # 🟢/🔴 Desenha a resposta do aluno
-                    c_b = s_item['chosen_box']
-                    if c_b:
-                        color = (0, 200, 0) if is_correct else (0, 0, 235)
-                        cv2.rectangle(s_img, (int(c_b['x']), int(c_b['y'])), (int(c_b['x']+c_b['w']), int(c_b['y']+c_b['h'])), color, 3)
-                
-                # Exibição dos resultados estruturados
-                t1, t2 = st.columns([1.2, 1])
-                with t1:
-                    st.subheader("🔍 Mapeamento Visual da IA")
-                    st.caption("Legenda: Retângulos Azuis = Números das questões detectados | Verdes/Vermelhos = Respostas avaliadas")
-                    st.image(cv2.cvtColor(s_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-                with t2:
-                    st.subheader("📊 Relatório Analítico")
-                    total_q = len(s_res)
-                    if total_q > 0:
-                        st.metric("Nota Final", f"{((correct_count / total_q) * 10):.2f} / 10.0", f"{correct_count} acertos de {total_q} questões")
-                    st.dataframe(pd.DataFrame(table_report), use_container_width=True, hide_index=True)
+                    final_grade = (correct_answers / num_questions) * 10
+                    idx1.metric("Nota do Aluno", f"{final_grade:.2f} / 10.0")
+                    idx2.metric("Total de Acertos", f"{correct_answers} itens")
+                    idx3.metric("Erros/Nulos", f"{num_questions - correct_answers} itens")
+                    idx4.metric("Aproveitamento Bruto", f"{int((correct_answers/num_questions)*100)}%")
+                    
+                    st.markdown("---")
+                    
+                    layout_left, layout_right = st.columns([1.3, 1])
+                    
+                    with layout_left:
+                        st.subheader("🔍 Validação Visográfica da IA")
+                        st.image(cv2.cvtColor(s_img, cv2.COLOR_BGR2RGB), use_container_width=True)
+                        
+                    with layout_right:
+                        st.subheader("📋 Matriz de Respostas Computadas")
+                        df_report = pd.DataFrame(report_data)
+                        st.dataframe(df_report, use_container_width=True, hide_index=True)
+
+    with tabs[1]:
+        st.header("Análise Avançada do Espectro Binário")
+        c_diag1, c_diag2 = st.columns(2)
+        with c_diag1:
+            st.subheader("Matriz Binária - Gabarito Mestre")
+            if 'm_thresh' in st.session_state:
+                st.image(st.session_state['m_thresh'], use_container_width=True, channels="GRAY")
+        with c_diag2:
+            st.subheader("Matriz Binária - Prova Aluno")
+            if 's_thresh' in st.session_state:
+                st.image(st.session_state['s_thresh'], use_container_width=True, channels="GRAY")
 
 if __name__ == "__main__":
     main()
