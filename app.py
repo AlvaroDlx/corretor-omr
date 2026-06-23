@@ -71,9 +71,9 @@ class OMRProcessingEngine:
 
     @staticmethod
     def apply_computer_vision_filters(gray_img, sensitivity_mode):
-        """Retornando para a Binarização Adaptativa (Imune a sombras e luzes irregulares)"""
+        """Binarização Adaptativa para lidar com sombras do ambiente real."""
         blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
-        block_size = 45 # Aumentei o bloco para lidar melhor com sombras
+        block_size = 45 
         constant = 10 if sensitivity_mode == 'high' else 6
         
         thresh = cv2.adaptiveThreshold(
@@ -84,34 +84,44 @@ class OMRProcessingEngine:
 
     @classmethod
     def extract_and_filter_contours(cls, thresh_img):
+        """Nova Lógica Anti-Texto usando Análise Morfológica."""
         contours, _ = cv2.findContours(thresh_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         valid_bubbles = []
         
         for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = w / float(h)
+            area = cv2.contourArea(cnt)
             
-            if (12 <= w <= 65 and 12 <= h <= 65 and 0.65 <= aspect_ratio <= 1.35):
-                mask = np.zeros(thresh_img.shape, dtype="uint8")
-                cv2.drawContours(mask, [cnt], -1, 255, -1)
-                density = cv2.mean(thresh_img, mask=mask)[0]
+            # Filtro 1: Apenas objetos perfeitamente circulares/quadrados (ratio 0.8 a 1.2) e tamanho ok
+            if (15 <= w <= 65 and 15 <= h <= 65 and 0.8 <= aspect_ratio <= 1.25):
                 
-                valid_bubbles.append({
-                    'x': x, 'y': y, 'w': w, 'h': h,
-                    'cx': x + w / 2.0, 'cy': y + h / 2.0,
-                    'density': density
-                })
+                # Filtro 2: Solidez (Extent) - Ignora traços finos como letras e números soltos
+                extent = area / float(w * h)
+                
+                # Se o objeto tem massa suficiente (não é uma letra fina), é aprovado como bolha
+                if extent > 0.35:
+                    mask = np.zeros(thresh_img.shape, dtype="uint8")
+                    cv2.drawContours(mask, [cnt], -1, 255, -1)
+                    density = cv2.mean(thresh_img, mask=mask)[0]
+                    
+                    valid_bubbles.append({
+                        'x': x, 'y': y, 'w': w, 'h': h,
+                        'cx': x + w / 2.0, 'cy': y + h / 2.0,
+                        'density': density
+                    })
         return valid_bubbles
 
     @classmethod
     def process_form(cls, image_bytes, num_questions, num_options, sensitivity_mode):
+        """Orquestrador com Pensamento Independente Integrado."""
         src, scale = cls.normalize_resolution(image_bytes)
         gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
         thresh = cls.apply_computer_vision_filters(gray, sensitivity_mode)
         bubbles = cls.extract_and_filter_contours(thresh)
         
         if len(bubbles) < num_questions:
-            return None, src, thresh, f"Déficit de Captura: Apenas {len(bubbles)} círculos identificados. Mínimo esperado: {num_questions}."
+            return None, src, thresh, f"Déficit de Captura: Apenas {len(bubbles)} bolhas identificadas. Ajuste a foto."
         
         y_coords = np.array([[b['cy']] for b in bubbles])
         kmeans = KMeans(n_clusters=num_questions, random_state=42, n_init='auto').fit(y_coords)
@@ -129,10 +139,12 @@ class OMRProcessingEngine:
             current_row = rows_map[label]
             current_row.sort(key=lambda b: b['cx'])
             
+            # PENSAMENTO ESTRUTURAL INDEPENDENTE: Corta ruídos lidos à esquerda (como números das questões)
+            if len(current_row) > num_options:
+                current_row = current_row[-num_options:]
+                
             max_density = -1
             detected_option_index = -1
-            
-            # Valores de corte ajustados de volta para o limiar adaptativo
             cutoff_threshold = 22 if sensitivity_mode == 'high' else 38
             
             for b_idx, b in enumerate(current_row):
