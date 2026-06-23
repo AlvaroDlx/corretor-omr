@@ -81,15 +81,15 @@ class OMRProcessingEngine:
 
     @staticmethod
     def apply_computer_vision_filters(gray_img, sensitivity_mode):
-        """Aplica mascaramento adaptativo e remoção de ruídos de alta frequência."""
+        """Aplica binarização rígida focada em Preto e Branco puro para máxima precisão."""
+        # Suaviza levemente para tirar imperfeições serrilhadas
         blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
-        block_size = 35
-        constant = 8 if sensitivity_mode == 'high' else 4
         
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, block_size, constant
-        )
+        # Define o ponto de corte: Sensibilidade Alta aceita tons de cinza mais claros (lápis)
+        threshold_value = 210 if sensitivity_mode == 'high' else 175
+        
+        # Aplica o threshold global invertido (o que for marcação vira Branco, fundo vira Preto)
+        _, thresh = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
         return thresh
 
     @classmethod
@@ -145,7 +145,9 @@ class OMRProcessingEngine:
             
             max_density = -1
             detected_option_index = -1
-            cutoff_threshold = 22 if sensitivity_mode == 'high' else 38
+            
+            # Ajuste dinâmico de densidade para o novo mapa estrito em P&B
+            cutoff_threshold = 40 if sensitivity_mode == 'high' else 80
             
             for b_idx, b in enumerate(current_row):
                 if b['density'] > max_density:
@@ -189,18 +191,17 @@ def main():
     tabs = st.tabs(["📊 Painel de Operações", "🔍 Diagnóstico da IA e Filtros", "📋 Documentação Técnica"])
 
     with tabs[2]:
-        st.header("Documentação do System")
+        st.header("Documentação do Sistema")
         st.markdown("""
         ### Funcionamento do Pipeline de IA:
         1. **Normalização Espacial:** Imagens recebidas são redimensionadas em uma matriz fixa de 1000 pixels horizontais para mitigar variações de hardware de câmeras.
-        2. **Filtragem por Distribuição Gaussiana Adaptativa:** Remove sombras dinâmicas e realça variações de contraste causadas por canetas esferográficas.
-        3. **Clusterização por K-Means:** O algoritmo divide as coordenadas geográficas $Y$ em agrupamentos homogêneos baseados no hiperparâmetro de questões inserido.
+        2. **Binarização Rígida de Alto Contraste:** Converte pixels diretamente para binário absoluto (0 ou 255), eliminando variações de cinza intermediárias.
+        3. **Clusterização por K-Means:** O algoritmo divide as coordenadas geográficas Y em agrupamentos homogêneos baseados no hiperparâmetro de questões inserido.
         """)
 
     with tabs[0]:
         c1, c2 = st.columns(2)
         
-        # Gerenciamento dinâmico de carregamento vs embutido
         with c1:
             st.subheader("📁 Gabarito de Calibração (Mestre)")
             master_file = st.file_uploader("Upload da folha gabarito", type=['jpg','jpeg','png'], key="m_upl")
@@ -212,7 +213,7 @@ def main():
                 st.image(m_bytes, caption="📸 [MODO EMBUTIDO] Gabarito Mestre gerado via código.", use_container_width=True)
             
         with c2:
-            st.subheader("📁 Cartão de Respostas (Aluno)")
+            st.subheader("📁 Cartão de Respostas (Alunos)")
             student_file = st.file_uploader("Upload da folha do aluno", type=['jpg','jpeg','png'], key="s_upl")
             if student_file:
                 s_bytes = student_file.getvalue()
@@ -250,11 +251,10 @@ def main():
                         
                         box = s_data['box']
                         if box:
-                            draw_color = (0, 200, 0) if match else (0, 0, 230) # Sistema BGR do OpenCV
+                            draw_color = (0, 200, 0) if match else (0, 0, 230)
                             cv2.rectangle(s_img, (int(box['x']), int(box['y'])), 
                                           (int(box['x'] + box['w']), int(box['y'] + box['h'])), draw_color, 3)
                     
-                    # Dashboard de métricas estatísticas
                     st.subheader("📊 Relatório de Performance Estatística")
                     idx1, idx2, idx3, idx4 = st.columns(4)
                     
